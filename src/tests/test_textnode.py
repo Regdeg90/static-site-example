@@ -193,6 +193,17 @@ class TestExtractMethods(unittest.TestCase):
             ],
             text_to_textnodes(text),
         )
+    
+    def test_more_image_nodes(self):
+        text = "![LOTR image artistmonkeys](/images/rivendell.png)"
+        self.assertEqual([TextNode("LOTR image artistmonkeys", TextType.IMAGE, "/images/rivendell.png")], text_to_textnodes(text))
+    
+    def test_more_link_nodes(self):
+        text = "[Back Home](/)"
+        self.assertEqual([TextNode("Back Home", TextType.LINK, "/")], text_to_textnodes(text))
+    
+    def test_code(self):
+        print(text_to_textnodes("An elaborate pantheon of deities (the `Valar` and `Maiar`)"))
 
 
 class MarkdownMethods(unittest.TestCase):
@@ -232,7 +243,7 @@ This is a paragraph of text. It has some **bold** and *italic* words inside of i
             [block_to_block_type(block) for block in markdown_to_blocks(markdown)],
         )
 
-    def test_markdown_to_html_node(self):
+    def thingtest_markdown_to_html_node(self):
         markdown = """# This is a heading
 
 This is a paragraph of text. It has some **bold** and *italic* words inside of it.

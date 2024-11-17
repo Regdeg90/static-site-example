@@ -59,7 +59,9 @@ def split_nodes_delimiter(old_nodes, delimiter, text_type):
         if node.text_type != TextType.TEXT or delimiter not in node.text:
             new_nodes.append(node)
         else:
-            split = node.text.split(delimiter)
+            split = node.text.split(delimiter, maxsplit=2)
+            print(split)
+            print(split[0], split[1], "".join(split[2:]))
             new_nodes.extend(
                 [TextNode(split[0], TextType.TEXT), TextNode(split[1], text_type)]
             )
@@ -99,19 +101,26 @@ def split_nodes_image(old_nodes):
         if node.text_type != TextType.TEXT:
             new_nodes.append(node)
             continue
-        matches = re.findall(r"\s!\[.*?\]\(.*?\)", node.text)
+        matches = re.findall(r"(?:^|\s)!\[[^\]]*?\]\([^\)]*?\)", node.text)
         text = node.text
         for m in matches:
+            if not m:
+                continue
             if not text:
                 break
             left_text, text = text.split(m, maxsplit=1)
-            x = m.split("](")
-            new_nodes.extend(
-                [
-                    TextNode(left_text + " ", TextType.TEXT),
-                    TextNode(x[0][3:], TextType.IMAGE, url=x[1][:-1]),
-                ]
-            )
+            t, url = m.split("](")
+            t = t.lstrip(" ![")
+            url = url.rstrip(")")
+            if not left_text:
+                new_nodes.append(TextNode(t, TextType.IMAGE, url=url))
+            else:
+                new_nodes.extend(
+                    [
+                        TextNode(left_text + " ", TextType.TEXT),
+                        TextNode(t, TextType.IMAGE, url=url),
+                    ]
+                )
         if text:
             new_nodes.append(TextNode(text, TextType.TEXT))
 
@@ -125,19 +134,24 @@ def split_nodes_link(old_nodes):
         if node.text_type != TextType.TEXT:
             new_nodes.append(node)
             continue
-        matches = re.findall(r"\s\[.*?\]\(.*?\)", node.text)
+        matches = re.findall(r"(?:^|\s)\[.*?\]\(.*?\)", node.text)
         text = node.text
         for m in matches:
             if not text:
                 break
             left_text, text = text.split(m, maxsplit=1)
-            x = m.split("](")
-            new_nodes.extend(
-                [
-                    TextNode(left_text + " ", TextType.TEXT),
-                    TextNode(x[0][2:], TextType.LINK, url=x[1][:-1]),
-                ]
-            )
+            t, url = m.split("](")
+            t = t.lstrip(" [")
+            url = url.rstrip(")")
+            if not left_text:
+                new_nodes.append(TextNode(t, TextType.LINK, url=url))
+            else:
+                new_nodes.extend(
+                    [
+                        TextNode(left_text + " ", TextType.TEXT),
+                        TextNode(t, TextType.LINK, url=url),
+                    ]
+                )
         if text:
             new_nodes.append(TextNode(text, TextType.TEXT))
 
@@ -172,11 +186,11 @@ def block_to_block_type(markdown):
 
     if re.findall(r"^[#+]{1,6}", markdown):
         return "heading"
-    if l > 5 and markdown[:2] == "```" and markdown[:2] == markdown[-2:]:
+    if l > 5 and markdown[:3] == "```" and markdown[:3] == markdown[-3:]:
         return "code"
     if all([x[0] == ">" for x in markdown.split("\n")]):
         return "quote"
-    if all([x[0] in "*-" for x in markdown.split("\n")]):
+    if all([x[0] in "*-" and x[1] == " " for x in markdown.split("\n")]):
         return "unordered_list"
     is_para = False
     for i, x in enumerate(markdown.split("\n")):
@@ -188,6 +202,12 @@ def block_to_block_type(markdown):
         is_para = True
         break
     return "paragraph" if is_para else "ordered_list"
+
+def extract_header(markdown):
+    for block in markdown_to_blocks(markdown):
+        if block.startswith("# "):
+            return block.lstrip("# ").rstrip(" ")
+    raise ValueError("need a header")
 
 
 def markdown_to_html_node(markdown):
@@ -210,28 +230,25 @@ def markdown_to_html_node(markdown):
                 if x != "#":
                     break
                 cnt += 1
-            block = block[cnt:]
+            block = block.lstrip("# ")
             children.append(
                 ParentNode(
                     tag=f"h{cnt}",
                     children=[
                         text_node_to_html_node(node)
-                        for node in text_to_textnodes(block[cnt:])
+                        for node in text_to_textnodes(block)
                     ],
                 )
             )
         elif tpe == "code":
-            b = block.rstrip("```").lstrip("```")
+            b = block.rstrip("```").lstrip("```\n")
             children.append(
                 ParentNode(
                     tag="pre",
                     children=[
-                        ParentNode(
+                        LeafNode(
                             tag="code",
-                            children=[
-                                text_node_to_html_node(node)
-                                for node in text_to_textnodes(b)
-                            ],
+                            value=b
                         )
                     ],
                 )
@@ -239,12 +256,13 @@ def markdown_to_html_node(markdown):
         elif tpe == "unordered_list":
             sub_children = []
             for l in block.split("\n"):
+                l = l[1:].lstrip(" ")
                 sub_children.append(
                     ParentNode(
                         tag="li",
                         children=[
                             text_node_to_html_node(node)
-                            for node in text_to_textnodes(l[1:])
+                            for node in text_to_textnodes(l)
                         ],
                     )
                 )
@@ -252,22 +270,23 @@ def markdown_to_html_node(markdown):
         elif tpe == "ordered_list":
             sub_children = []
             for l in block.split("\n"):
-                _, x = l.split(" ", maxsplit=1)
+                _, l = l.split(".", maxsplit=1)
+                l =l.lstrip(" ")
                 sub_children.append(
                     ParentNode(
-                        tag="ol",
+                        tag="li",
                         children=[
                             text_node_to_html_node(node)
-                            for node in text_to_textnodes(x)
+                            for node in text_to_textnodes(l)
                         ],
                     )
                 )
-            children.append(ParentNode(tag="ul", children=sub_children))
+            children.append(ParentNode(tag="ol", children=sub_children))
         elif tpe == "quote":
             sub_children = []
             for l in block.split("\n"):
                 sub_children.extend(
-                    [text_node_to_html_node(node) for node in text_to_textnodes(l[1:])]
+                    [text_node_to_html_node(node) for node in text_to_textnodes(l.lstrip("> "))]
                 )
             children.append(
                 ParentNode(
@@ -276,4 +295,4 @@ def markdown_to_html_node(markdown):
                 )
             )
 
-    return HTMLNode(tag="div", children=children)
+    return ParentNode(tag="div", children=children)
